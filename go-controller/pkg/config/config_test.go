@@ -1713,7 +1713,7 @@ foo=bar
 				"hybrid overlay is not supported with ovnkube-node mode"))
 		})
 
-		It("Fails if management port is not provided and ovnkube node mode is dpu", func() {
+		It("Fails if management port is provided and ovnkube node mode is dpu", func() {
 			cliConfig := config{
 				OvnKubeNode: OvnKubeNodeConfig{
 					Mode: types.NodeModeDPU,
@@ -1721,7 +1721,7 @@ foo=bar
 			}
 			err := buildOvnKubeNodeConfig(nil, &cliConfig, &config{})
 			gomega.Expect(err).To(gomega.HaveOccurred())
-			gomega.Expect(err.Error()).To(gomega.ContainSubstring("ovnkube-node-mgmt-port-netdev must be provided"))
+			gomega.Expect(err.Error()).To(gomega.ContainSubstring("ovnkube-node-mgmt-port-netdev must not be provided"))
 		})
 
 		It("Fails if management port is not provided and ovnkube node mode is dpu-host", func() {

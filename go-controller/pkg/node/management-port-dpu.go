@@ -5,6 +5,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/vishvananda/netlink"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 
@@ -24,12 +25,7 @@ type managementPortRepresentor struct {
 func newManagementPortRepresentor(nodeName string, hostSubnets []*net.IPNet) ManagementPort {
 	var repName string
 
-	// In ovnkube-node mode DPU representor name stored in MgmtPortNetdev variable
-	if config.OvnKubeNode.MgmtPortRepresentor == "" {
-		repName = config.OvnKubeNode.MgmtPortNetdev
-	} else {
-		repName = config.OvnKubeNode.MgmtPortRepresentor
-	}
+	repName = config.OvnKubeNode.MgmtPortRepresentor
 	return &managementPortRepresentor{
 		nodeName:    nodeName,
 		hostSubnets: hostSubnets,
@@ -179,20 +175,27 @@ func newManagementPortNetdev(hostSubnets []*net.IPNet) ManagementPort {
 	}
 }
 
-func (mp *managementPortNetdev) Create(nodeAnnotator kube.Annotator, waiter *startupWaiter) (*managementPortConfig, error) {
-	klog.Infof("Lookup netdevice link and existing management port")
-	// get netdev that is used for management port.
-	link, err := util.GetNetLinkOps().LinkByName(mp.netdevName)
+func getManagmentPortNetDev(netdevName string) (netlink.Link, error) {
+	link, err := util.GetNetLinkOps().LinkByName(netdevName)
 	if err != nil {
 		if !util.GetNetLinkOps().IsLinkNotFoundError(err) {
-			return nil, fmt.Errorf("failed to lookup %s link: %v", mp.netdevName, err)
+			return nil, fmt.Errorf("failed to lookup %s link: %v", netdevName, err)
 		}
 		// this may not the first time invoked on the node after reboot
 		// netdev may have already been renamed to ovn-k8s-mp0.
 		link, err = util.GetNetLinkOps().LinkByName(types.K8sMgmtIntfName)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get link device for %s. %v", mp.netdevName, err)
+			return nil, fmt.Errorf("failed to get link device for %s. %v", netdevName, err)
 		}
+    }
+    return link, err
+}
+
+func (mp *managementPortNetdev) Create(nodeAnnotator kube.Annotator, waiter *startupWaiter) (*managementPortConfig, error) {
+	klog.Infof("Lookup netdevice link and existing management port")
+	link, err := getManagmentPortNetDev(mp.netdevName)
+	if err != nil {
+		return nil, err
 	} else if mp.netdevName != types.K8sMgmtIntfName {
 		if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
 			// We do not expect OVS running here so just check if no old mgmt port netdevice exists and unconfigure it

@@ -35,6 +35,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	"github.com/vishvananda/netlink"
 	apierrors "k8s.io/apimachinery/pkg/util/errors"
+	sriovnet "github.com/Mellanox/sriovnet"
 )
 
 type CommonNodeNetworkControllerInfo struct {
@@ -376,7 +377,46 @@ type managementPortEntry struct {
 	config *managementPortConfig
 }
 
-func createNodeManagementPorts(name string, nodeAnnotator kube.Annotator, waiter *startupWaiter,
+func exportManagementPortAnnotation(link netlink.Link, nodeAnnotator kube.Annotator) error {
+	klog.Infof("Exporting management port annotation")
+
+	netDev := link.Attrs().Name
+	deviceID, err := util.GetDeviceIDFromNetdevice(netDev)
+	if err != nil {
+		return err
+	}
+	pfPciAddress, err := util.GetSriovnetOps().GetPfPciFromVfPci(deviceID)
+	if err != nil {
+		return err
+	}
+	vfindex, err := util.GetSriovnetOps().GetVfIndexByPciAddress(deviceID)
+	if err != nil {
+		return err
+	}
+	var domain, bus, dev, fn int
+	parsed, err := fmt.Sscanf(pfPciAddress, "%04x:%02x:%02x.%d", &domain, &bus, &dev, &fn)
+	if parsed != 4 {
+		return fmt.Errorf("Failed to parse PF pci address'%v'", pfPciAddress)
+	}
+	if err != nil {
+		return err
+	}
+
+	return util.SetNodeManagementPort(nodeAnnotator, fn, vfindex)
+}
+
+func importManagementPortAnnotation(node *kapi.Node) (string, error) {
+	klog.Infof("Important management port annotation")
+	pfId, vfId, err := util.ParseNodeManagementPort(node)
+
+	if err != nil {
+		return "", err
+	}
+
+	return sriovnet.GetVfRepresentorDPU(fmt.Sprintf("%d", pfId), fmt.Sprintf("%d", vfId))
+}
+
+func createNodeManagementPorts(node *kapi.Node, nodeAnnotator kube.Annotator, waiter *startupWaiter,
 	subnets []*net.IPNet) ([]managementPortEntry, *managementPortConfig, error) {
 	// If netdevice name is not provided in the full mode then management port backed by OVS internal port.
 	// If it is provided then it is backed by VF or SF and need to determine its representor name to plug
@@ -397,7 +437,24 @@ func createNodeManagementPorts(name string, nodeAnnotator kube.Annotator, waiter
 		}
 		config.OvnKubeNode.MgmtPortRepresentor = rep
 	}
-	ports := NewManagementPorts(name, subnets)
+
+	if config.OvnKubeNode.Mode == types.NodeModeDPUHost {
+		link, err := getManagmentPortNetDev(config.OvnKubeNode.MgmtPortNetdev)
+		if err != nil {
+			return nil, nil, err
+		}
+		err = exportManagementPortAnnotation(link, nodeAnnotator)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else if config.OvnKubeNode.Mode == types.NodeModeDPU {
+		vfrep, err := importManagementPortAnnotation(node)
+		if err != nil {
+			return nil, nil, err
+		}
+		config.OvnKubeNode.MgmtPortRepresentor = vfrep
+	}
+	ports := NewManagementPorts(node.Name, subnets)
 
 	var mgmtPortConfig *managementPortConfig
 	mgmtPorts := make([]managementPortEntry, 0)
@@ -495,7 +552,7 @@ func (nc *DefaultNodeNetworkController) Start(ctx context.Context) error {
 	waiter := newStartupWaiter()
 
 	// Setup management ports
-	mgmtPorts, mgmtPortConfig, err := createNodeManagementPorts(nc.name, nodeAnnotator, waiter, subnets)
+	mgmtPorts, mgmtPortConfig, err := createNodeManagementPorts(node, nodeAnnotator, waiter, subnets)
 	if err != nil {
 		return err
 	}

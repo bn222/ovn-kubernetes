@@ -51,6 +51,9 @@ const (
 	// OvnDefaultNetworkGateway captures L3 gateway config for default OVN network interface
 	ovnDefaultNetworkGateway = "default"
 
+	// ovnNodeManagementPort is the constant string representing the annotation key
+	ovnNodeManagementPort = "k8s.ovn.org/node-mgmt-port"
+
 	// ovnNodeManagementPortMacAddress is the constant string representing the annotation key
 	ovnNodeManagementPortMacAddress = "k8s.ovn.org/node-mgmt-port-mac-address"
 
@@ -306,6 +309,38 @@ func ParseNodeChassisIDAnnotation(node *kapi.Node) (string, error) {
 	}
 
 	return chassisID, nil
+}
+
+type ManagementPortDetails struct {
+	PfId int `json:"PfId"`
+	VfId int `json:"VfId"`
+}
+
+func SetNodeManagementPort(nodeAnnotator kube.Annotator, PfId int, VfId int) error {
+    mgmtPortDetails := ManagementPortDetails{}
+    mgmtPortDetails.PfId = PfId
+    mgmtPortDetails.VfId = VfId
+    bytes, err := json.Marshal(mgmtPortDetails)
+    if err != nil {
+        return fmt.Errorf("failed marshaling")
+    }
+	return nodeAnnotator.Set(ovnNodeManagementPort, string(bytes))
+}
+
+// ParseNodeManagementPort returns the parsed host addresses living on a node
+func ParseNodeManagementPort(node *kapi.Node) (int, int, error) {
+	addrAnnotation, ok := node.Annotations[ovnNodeManagementPort]
+	if !ok {
+		return 0, 0, newAnnotationNotSetError("%s annotation not found for node %q", ovnNodeManagementPort, node.Name)
+	}
+
+	cfg := ManagementPortDetails{}
+	if err := json.Unmarshal([]byte(addrAnnotation), &cfg); err != nil {
+		return 0, 0, fmt.Errorf("failed to unmarshal host addresses annotation %s for node %q: %v",
+			addrAnnotation, node.Name, err)
+	}
+
+	return cfg.PfId, cfg.VfId, nil
 }
 
 func SetNodeManagementPortMACAddress(nodeAnnotator kube.Annotator, macAddress net.HardwareAddr) error {

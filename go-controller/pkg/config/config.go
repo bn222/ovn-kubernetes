@@ -2311,11 +2311,15 @@ func buildOvnKubeNodeConfig(ctx *cli.Context, cli, file *config) error {
 	if OvnKubeNode.Mode != types.NodeModeFull && HybridOverlay.Enabled {
 		return fmt.Errorf("hybrid overlay is not supported with ovnkube-node mode %s", OvnKubeNode.Mode)
 	}
-	// when DPU is used, management port is backed by a VF. get management port VF information
-	if OvnKubeNode.Mode == types.NodeModeDPU || OvnKubeNode.Mode == types.NodeModeDPUHost {
-		if OvnKubeNode.MgmtPortNetdev == "" {
-			return fmt.Errorf("ovnkube-node-mgmt-port-netdev must be provided")
-		}
+
+	// when DPU is used, management port is always backed by a VF. On the host
+	// side, it needs to be provided through --ovnkube-node-mgmt-port-netdev.
+	// On the DPU, it is derrived from the annotation exposed on the host side.
+	if OvnKubeNode.Mode == types.NodeModeDPU && OvnKubeNode.MgmtPortNetdev != "" {
+		return fmt.Errorf("ovnkube-node-mgmt-port-netdev must not be provided")
+	}
+	if OvnKubeNode.Mode == types.NodeModeDPUHost && OvnKubeNode.MgmtPortNetdev == "" {
+		return fmt.Errorf("ovnkube-node-mgmt-port-netdev must be provided")
 	}
 	return nil
 }
